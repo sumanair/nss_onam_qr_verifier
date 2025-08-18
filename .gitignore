@@ -1,0 +1,69 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── Dependencies
+node_modules/
+
+# ── Build output
+dist/
+dist-ssr/
+build/
+
+# ── Vite / tooling caches
+.vite/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.cache/
+
+# ── Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Env files (keep an example)
+.env
+.env.*
+!.env.example
+
+# ── Test artifacts (add/remove if you use these)
+coverage/
+cypress/videos/
+cypress/screenshots/
+.cypress-cache/
+
+# ── Editor/OS cruft
+
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
