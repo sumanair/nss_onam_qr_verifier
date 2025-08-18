@@ -172,6 +172,10 @@ function valueOut(v: unknown) {
   return String(v ?? "");
 }
 
+// util
+const clamp = (n: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, n));
+
 /* ---------- App ---------- */
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -498,6 +502,22 @@ export default function App() {
   const remaining =
     summary?.remaining ?? Math.max(0, purchased - checkedIn);
 
+  const maxAdmit = Math.max(1, remaining || 0);
+  const maxUndo  = Math.max(1, checkedIn || 0);
+
+  // Clamp the counters whenever limits change
+  useEffect(() => {
+    setAdmitCount((c) => clamp(c, 1, maxAdmit));
+  }, [maxAdmit]);
+  useEffect(() => {
+    setUndoCount((c) => clamp(c, 1, maxUndo));
+  }, [maxUndo]);
+
+  const incAdmit = () => setAdmitCount((c) => clamp(c + 1, 1, maxAdmit));
+  const decAdmit = () => setAdmitCount((c) => clamp(c - 1, 1, maxAdmit));
+  const incUndo  = () => setUndoCount((c) => clamp(c + 1, 1, maxUndo));
+  const decUndo  = () => setUndoCount((c) => clamp(c - 1, 1, maxUndo));
+
   const startDisabled =
     !verifierId.trim() || (REQUIRE_KEY && !apiKey.trim());
 
@@ -673,23 +693,31 @@ export default function App() {
               <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                 <label className="nbox">
                   Admit now
-                  <input
-                    type="number"
-                    min={1}
-                    max={Math.max(1, remaining)}
-                    value={admitCount}
-                    onChange={(e) =>
-                      setAdmitCount(
-                        Math.max(
-                          1,
-                          Math.min(
-                            remaining || 1,
-                            Number(e.target.value) || 1
-                          )
+                  <div className="stepper">
+                    <button
+                      className="btn btn-outline-gold btn-step"
+                      onClick={decAdmit}
+                      disabled={admitCount <= 1}
+                      aria-label="Decrease admit count"
+                    >−</button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={maxAdmit}
+                      value={admitCount}
+                      onChange={(e) =>
+                        setAdmitCount(
+                          clamp(Number(e.target.value) || 1, 1, maxAdmit)
                         )
-                      )
-                    }
-                  />
+                      }
+                    />
+                    <button
+                      className="btn btn-outline-gold btn-step"
+                      onClick={incAdmit}
+                      disabled={admitCount >= maxAdmit}
+                      aria-label="Increase admit count"
+                    >+</button>
+                  </div>
                 </label>
                 <button
                   className="btn btn-maroon"
@@ -701,23 +729,31 @@ export default function App() {
 
                 <label className="nbox">
                   Undo
-                  <input
-                    type="number"
-                    min={1}
-                    max={Math.max(1, checkedIn)}
-                    value={undoCount}
-                    onChange={(e) =>
-                      setUndoCount(
-                        Math.max(
-                          1,
-                          Math.min(
-                            checkedIn || 1,
-                            Number(e.target.value) || 1
-                          )
+                  <div className="stepper">
+                    <button
+                      className="btn btn-outline-gold btn-step"
+                      onClick={decUndo}
+                      disabled={undoCount <= 1}
+                      aria-label="Decrease undo count"
+                    >−</button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={maxUndo}
+                      value={undoCount}
+                      onChange={(e) =>
+                        setUndoCount(
+                          clamp(Number(e.target.value) || 1, 1, maxUndo)
                         )
-                      )
-                    }
-                  />
+                      }
+                    />
+                    <button
+                      className="btn btn-outline-gold btn-step"
+                      onClick={incUndo}
+                      disabled={undoCount >= maxUndo}
+                      aria-label="Increase undo count"
+                    >+</button>
+                  </div>
                 </label>
                 <button
                   className="btn btn-orange"
@@ -869,8 +905,15 @@ export default function App() {
         .m-title{ color:#6b7280; font-size:.85rem; }
         .m-value{ font-size:1.25rem; font-weight:700; }
 
-        .nbox{ display:flex; flex-direction:column; gap:4px; font-size:.9rem; color:#444; }
-        .nbox input{ width:90px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; color:var(--ink); background:#fff; }
+        .nbox{ display:flex; flex-direction:column; gap:6px; font-size:.9rem; color:#444; }
+        .nbox input{ width:90px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; color:var(--ink); background:#fff; text-align:center; }
+
+        /* custom stepper */
+        .stepper{ display:flex; align-items:center; gap:6px; }
+        .btn-step{ padding:.35rem .6rem; min-height:auto; border-radius:10px; }
+        .btn-step:disabled{ opacity:.4; }
+
+        /* Hide native spin buttons (we provide +/-) */
         input[type="number"]{-moz-appearance:textfield;}
         input[type="number"]::-webkit-outer-spin-button,
         input[type="number"]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
