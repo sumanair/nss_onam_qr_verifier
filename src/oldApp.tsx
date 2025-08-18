@@ -11,26 +11,18 @@ type Summary = {
   email: string;
   number_of_attendees: number;
   number_checked_in: number;
-  remaining: number;
-  all_attendees_checked_in: boolean;
-};
-
-type CheckinResp = {
-  message: string;
-  checked_in: number;
-  remaining: number;
 };
 
 const HIDE_KEYS = new Set(["transaction_id", "transactionid", "txn", "txid"]);
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-const API_KEY_ENV = import.meta.env.VITE_VERIFIER_API_KEY || ""; // optional default
+const API_KEY_ENV = import.meta.env.VITE_VERIFIER_API_KEY || "";         // optional default
 const REQUIRE_KEY = String(import.meta.env.VITE_REQUIRE_API_KEY || "false").toLowerCase() === "true";
 
 /** Backend endpoints */
 const ENDPOINTS = {
   summary: (txn: string) =>
     `${API_BASE}/api/attendance/summary?transaction_id=${encodeURIComponent(txn)}`,
-  update: `${API_BASE}/api/checkin`, // POST { transaction_id, delta, verifier_id?, notes? }
+  update: `${API_BASE}/api/checkin`, // POST { transaction_id, delta, verifier_id? }
 };
 
 /* ---------- Decoders ---------- */
@@ -127,9 +119,6 @@ export default function App() {
   // API key (persisted)
   const [apiKey, setApiKey] = useState<string>("");
 
-  // Optional check-in note (per action)
-  const [note, setNote] = useState<string>("");
-
   // Settings UI
   const [showSettings, setShowSettings] = useState(false);
 
@@ -213,7 +202,7 @@ export default function App() {
     setStatus("Initializing camera…");
     setPayload(null); setTxn(""); lastResultRef.current = "";
     setTorchOn(false); setFlashSupported(false);
-    setSummary(null); setSumErr(""); setAdmitCount(1); setUndoCount(1); setNote("");
+    setSummary(null); setSumErr(""); setAdmitCount(1); setUndoCount(1);
 
     // prefer rear camera
     let deviceId: string | undefined;
@@ -310,6 +299,7 @@ export default function App() {
           const detail = data?.detail || `Lookup failed (${r.status})`;
           setSumErr(detail);
           setSummary(null);
+          // Helpful hint if unauthorized
           if (r.status === 401) setStatus("⛔ Unauthorized. Enter API key in Settings.");
         } else {
           const data = await r.json();
@@ -327,7 +317,7 @@ export default function App() {
     return () => { alive = false; };
   }, [txn, apiKey]);
 
-  // Perform a check-in delta and apply server's returned counts (no extra fetch)
+  // Perform a check-in delta and refresh summary
   async function applyDelta(delta: number) {
     if (!txn || delta === 0) return;
     setActionBusy(true);
@@ -339,28 +329,19 @@ export default function App() {
           ...(apiKey ? { "X-API-Key": apiKey } : {}),
         },
         credentials: "include",
-        body: JSON.stringify({
-          transaction_id: txn,
-          delta,
-          verifier_id: verifierId || undefined,
-          notes: note || undefined,
-        }),
+        body: JSON.stringify({ transaction_id: txn, delta, verifier_id: verifierId || undefined }),
       });
-      const data: Partial<CheckinResp> & { detail?: string } = await r.json().catch(()=> ({} as any));
+      const data = await r.json().catch(()=> ({}));
       if (!r.ok) {
         alert(data?.detail || data?.message || `Update failed (${r.status})`);
-      } else if (summary) {
-        // Merge new counts into summary without refetch
-        setSummary({
-          ...summary,
-          number_checked_in: data.checked_in ?? summary.number_checked_in,
-          remaining: data.remaining ?? Math.max(0, summary.number_of_attendees - (data.checked_in ?? summary.number_checked_in)),
-          all_attendees_checked_in: (data.remaining ?? summary.remaining) === 0 && summary.number_of_attendees > 0,
+      } else {
+        // re-fetch summary to reflect latest counts
+        const ref = await fetch(ENDPOINTS.summary(txn), {
+          credentials: "include",
+          headers: apiKey ? { "X-API-Key": apiKey } : undefined,
         });
+        if (ref.ok) setSummary(await ref.json());
         alert(data?.message || "Updated");
-        setAdmitCount(1);
-        setUndoCount(1);
-        setNote("");
       }
     } catch (e: any) {
       alert(e?.message || "Network error");
@@ -377,7 +358,7 @@ export default function App() {
 
   const purchased = summary?.number_of_attendees ?? 0;
   const checkedIn = summary?.number_checked_in ?? 0;
-  const remaining = summary?.remaining ?? Math.max(0, purchased - checkedIn);
+  const remaining = Math.max(0, purchased - checkedIn);
 
   const startDisabled = !verifierId.trim() || (REQUIRE_KEY && !apiKey.trim());
 
@@ -417,16 +398,6 @@ export default function App() {
               placeholder="paste key"
               value={apiKey}
               onChange={e => updateApiKey(e.target.value)}
-            />
-          </div>
-          <div className="row">
-            <label className="lbl">Note</label>
-            <input
-              className="inp"
-              type="text"
-              placeholder="optional (gate, reason, etc.)"
-              value={note}
-              onChange={e => setNote(e.target.value)}
             />
           </div>
           <div className="row small">
@@ -546,10 +517,6 @@ export default function App() {
                   ➡️ Admit All ({remaining})
                 </button>
               </div>
-
-              {summary.all_attendees_checked_in && (
-                <div className="muted" style={{marginTop:8}}>🎉 All attendees for this transaction have checked in.</div>
-              )}
             </>
           )}
         </div>
@@ -600,12 +567,14 @@ export default function App() {
         .frame.active { box-shadow: 0 0 0 2px var(--accent), 0 8px 18px rgba(0,0,0,.18); }
         video { width:100%; height:100%; object-fit: cover; }
 
+        /* Decorative corners (grey) */
         .corner { position:absolute; width:18%; height:18%; border:3px solid var(--corner); border-radius:14px; pointer-events:none; }
         .tl{top:4%;left:4%;border-right:none;border-bottom:none;}
         .tr{top:4%;right:4%;border-left:none;border-bottom:none;}
         .bl{bottom:4%;left:4%;border-right:none;border-top:none;}
         .br{bottom:4%;right:4%;border-left:none;border-top:none;}
 
+        /* Fancy scanning overlay (yellow while active) */
         .scanline {
           position:absolute; left:6%; right:6%;
           height: 3px; top: 10%;
