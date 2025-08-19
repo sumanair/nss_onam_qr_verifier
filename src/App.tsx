@@ -23,7 +23,7 @@ type CheckinResp = {
 
 const HIDE_KEYS = new Set(["transaction_id", "transactionid", "txn", "txid"]);
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-const API_KEY_ENV = import.meta.env.VITE_VERIFIER_API_KEY || ""; // optional default
+const API_KEY_ENV = import.meta.env.VITE_VERIFIER_API_KEY || "";
 const REQUIRE_KEY =
   String(import.meta.env.VITE_REQUIRE_API_KEY || "false").toLowerCase() ===
   "true";
@@ -690,6 +690,7 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Top actions — Admit only (Undo moved to bottom) */}
               <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                 <label className="nbox">
                   Admit now
@@ -727,42 +728,6 @@ export default function App() {
                   ✅ Admit
                 </button>
 
-                <label className="nbox">
-                  Undo
-                  <div className="stepper">
-                    <button
-                      className="btn btn-outline-gold btn-step"
-                      onClick={decUndo}
-                      disabled={undoCount <= 1}
-                      aria-label="Decrease undo count"
-                    >−</button>
-                    <input
-                      type="number"
-                      min={1}
-                      max={maxUndo}
-                      value={undoCount}
-                      onChange={(e) =>
-                        setUndoCount(
-                          clamp(Number(e.target.value) || 1, 1, maxUndo)
-                        )
-                      }
-                    />
-                    <button
-                      className="btn btn-outline-gold btn-step"
-                      onClick={incUndo}
-                      disabled={undoCount >= maxUndo}
-                      aria-label="Increase undo count"
-                    >+</button>
-                  </div>
-                </label>
-                <button
-                  className="btn btn-orange"
-                  onClick={() => applyDelta(-undoCount)}
-                  disabled={actionBusy || checkedIn <= 0}
-                >
-                  ↩️ Undo
-                </button>
-
                 <button
                   className="btn btn-maroon"
                   onClick={() => applyDelta(remaining)}
@@ -796,6 +761,54 @@ export default function App() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* BOTTOM: Undo controls moved here (after table) with confirmation */}
+      {summary && !sumLoading && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <div className="actions actions-bottom" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <label className="nbox">
+              Undo
+              <div className="stepper">
+                <button
+                  className="btn btn-outline-gold btn-step"
+                  onClick={decUndo}
+                  disabled={undoCount <= 1}
+                  aria-label="Decrease undo count"
+                >−</button>
+                <input
+                  type="number"
+                  min={1}
+                  max={maxUndo}
+                  value={undoCount}
+                  onChange={(e) =>
+                    setUndoCount(
+                      clamp(Number(e.target.value) || 1, 1, maxUndo)
+                    )
+                  }
+                />
+                <button
+                  className="btn btn-outline-gold btn-step"
+                  onClick={incUndo}
+                  disabled={undoCount >= maxUndo}
+                  aria-label="Increase undo count"
+                >+</button>
+              </div>
+            </label>
+            <button
+              className="btn btn-orange"
+              onClick={() => {
+                const plural = undoCount > 1 ? "s" : "";
+                if (window.confirm(`Are you sure you want to undo ${undoCount} check-in${plural}?`)) {
+                  applyDelta(-undoCount);
+                }
+              }}
+              disabled={actionBusy || checkedIn <= 0}
+            >
+              ↩️ Undo
+            </button>
+          </div>
         </div>
       )}
 
