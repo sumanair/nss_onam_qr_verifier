@@ -3,6 +3,21 @@ import QrScanner from "qr-scanner";
 
 const logoUrl = `${import.meta.env.BASE_URL}nssnt-logo.png`;
 
+/* ===================== Auth Config ====================== */
+const LOGIN_USER  = (import.meta.env.VITE_LOGIN_USER  || "verifier").trim();
+const LOGIN_PASS  = (import.meta.env.VITE_LOGIN_PASS  || "").trim();
+// Optionally verify SHA-256("username:password") against this hex string.
+const LOGIN_SHA256 = (import.meta.env.VITE_LOGIN_SHA256 || "").toLowerCase().trim();
+const AUTH_STORAGE_KEY = "nssnt_auth"; // "1" => signed in
+
+async function sha256Hex(s: string): Promise<string> {
+  const enc = new TextEncoder();
+  const data = enc.encode(s);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+/* ===================== Types ====================== */
 type Payload = Record<string, unknown>;
 type ScanResultLike = string | { data?: string };
 
@@ -25,49 +40,30 @@ const HIDE_KEYS = new Set(["transaction_id", "transactionid", "txn", "txid"]);
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 const API_KEY_ENV = import.meta.env.VITE_VERIFIER_API_KEY || "";
 const REQUIRE_KEY =
-  String(import.meta.env.VITE_REQUIRE_API_KEY || "false").toLowerCase() ===
-  "true";
+  String(import.meta.env.VITE_REQUIRE_API_KEY || "false").toLowerCase() === "true";
 
 /** Backend endpoints */
 const ENDPOINTS = {
   summary: (txn: string) =>
-    `${API_BASE}/api/attendance/summary?transaction_id=${encodeURIComponent(
-      txn
-    )}`,
-  update: `${API_BASE}/api/checkin`, // POST { transaction_id, delta, verifier_id?, notes? }
+    `${API_BASE}/api/attendance/summary?transaction_id=${encodeURIComponent(txn)}`,
+  update: `${API_BASE}/api/checkin`,
 };
 
 /* ---------- Decoders ---------- */
-function b64UrlToB64(s: string) {
-  return (s || "").replace(/-/g, "+").replace(/_/g, "/");
-}
-function b64UrlDecode(s: string) {
-  try {
-    return atob(b64UrlToB64(s));
-  } catch {
-    return null;
-  }
-}
+function b64UrlToB64(s: string) { return (s || "").replace(/-/g, "+").replace(/_/g, "/"); }
+function b64UrlDecode(s: string) { try { return atob(b64UrlToB64(s)); } catch { return null; } }
 function hexToUtf8(hex: string) {
   try {
     const clean = (hex || "").replace(/[^0-9a-fA-F]/g, "");
     if (!clean || clean.length % 2) return "";
-    const bytes = new Uint8Array(
-      clean.match(/.{1,2}/g)!.map((h) => parseInt(h, 16))
-    );
+    const bytes = new Uint8Array(clean.match(/.{1,2}/g)!.map((h) => parseInt(h, 16)));
     return new TextDecoder().decode(bytes);
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
 function tryRawJson(s?: string) {
   if (!s) return null;
   const t = s.trim();
-  if (t.startsWith("{") && t.endsWith("}")) {
-    try {
-      return JSON.parse(t);
-    } catch {}
-  }
+  if (t.startsWith("{") && t.endsWith("}")) { try { return JSON.parse(t); } catch {} }
   return null;
 }
 function tryUrl(s?: string) {
@@ -78,52 +74,22 @@ function tryUrl(s?: string) {
       const v = u.searchParams.get(k);
       if (!v) continue;
       const cands: string[] = [];
-      const b = b64UrlDecode(v);
-      if (b) cands.push(b);
-      const h = hexToUtf8(v);
-      if (h) cands.push(h);
-      cands.push(decodeURIComponent(v));
-      for (const c of cands) {
-        try {
-          return JSON.parse(c);
-        } catch {}
-      }
+      const b = b64UrlDecode(v); if (b) cands.push(b);
+      const h = hexToUtf8(v);   if (h) cands.push(h);
+      try { cands.push(decodeURIComponent(v)); } catch {}
+      for (const c of cands) { try { return JSON.parse(c); } catch {} }
     }
     const last = u.pathname.split("/").filter(Boolean).pop();
     if (last) {
       const b = b64UrlDecode(last) || last;
-      try {
-        return JSON.parse(b);
-      } catch {}
+      try { return JSON.parse(b); } catch {}
     }
   } catch {}
   return null;
 }
-function tryBase64(s?: string) {
-  if (!s) return null;
-  const b = b64UrlDecode(s.trim());
-  if (!b) return null;
-  try {
-    return JSON.parse(b);
-  } catch {
-    return null;
-  }
-}
-function tryHex(s?: string) {
-  if (!s) return null;
-  const h = hexToUtf8(s.trim());
-  if (!h) return null;
-  try {
-    return JSON.parse(h);
-  } catch {
-    return null;
-  }
-}
-function decodeToJson(text?: string) {
-  return (
-    tryRawJson(text) ?? tryUrl(text) ?? tryBase64(text) ?? tryHex(text) ?? null
-  );
-}
+function tryBase64(s?: string) { if (!s) return null; const b = b64UrlDecode(s.trim()); if (!b) return null; try { return JSON.parse(b); } catch { return null; } }
+function tryHex(s?: string)    { if (!s) return null; const h = hexToUtf8(s.trim()); if (!h) return null; try { return JSON.parse(h); } catch { return null; } }
+function decodeToJson(text?: string) { return tryRawJson(text) ?? tryUrl(text) ?? tryBase64(text) ?? tryHex(text) ?? null; }
 
 function findTxnAny(obj: unknown): string {
   const norm = (s: string) => s.toLowerCase().replace(/\s|_/g, "");
@@ -152,38 +118,130 @@ function prettyLabel(k: string) {
     early_bird_applied: "Early Bird Applied",
     membership_paid: "Membership Paid",
   };
-  return (
-    map[k.toLowerCase()] ||
-    k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-  );
+  return map[k.toLowerCase()] || k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
-
 function valueOut(v: unknown) {
   if (typeof v === "boolean") return v ? "Yes" : "No";
   if (typeof v === "number")
-    return v.toLocaleString(undefined, {
-      minimumFractionDigits: Number.isInteger(v) ? 0 : 2,
-      maximumFractionDigits: 2,
-    });
+    return v.toLocaleString(undefined, { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 });
   if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) {
-    const d = new Date(v);
-    if (!isNaN(d.getTime())) return d.toLocaleString();
+    const d = new Date(v); if (!isNaN(d.getTime())) return d.toLocaleString();
   }
   return String(v ?? "");
 }
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
-// util
-const clamp = (n: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, n));
+/* ==================== Login Screen ====================== */
+function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [err,  setErr]  = useState("");
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setErr("");
+
+    if (LOGIN_SHA256) {
+      const h = await sha256Hex(`${user}:${pass}`);
+      if (h === LOGIN_SHA256) {
+        localStorage.setItem(AUTH_STORAGE_KEY, "1");
+        onAuthed();
+        return;
+      }
+      setErr("Invalid username or password.");
+      return;
+    }
+
+    if (user === LOGIN_USER && pass === LOGIN_PASS) {
+      localStorage.setItem(AUTH_STORAGE_KEY, "1");
+      onAuthed();
+    } else {
+      setErr("Invalid username or password.");
+    }
+  }
+
+  return (
+    <div className="wrap login-center">
+      <header className="brand brand-center">
+        <img className="logo" src={logoUrl} alt="NSSNT logo" />
+        <div className="brand-meta">
+          <h1 className="brand-title">NSSNT Verifier</h1>
+          <div className="brand-sub">Sign in to continue</div>
+        </div>
+      </header>
+
+      <form className="card login-card" onSubmit={handleLogin}>
+        <div className="row">
+          <label className="lbl">Username</label>
+          <input
+            className="inp"
+            type="text"
+            autoComplete="username"
+            value={user}
+            onChange={(e) => setUser(e.target.value)}
+            placeholder="verifier"
+            required
+          />
+        </div>
+        <div className="row">
+          <label className="lbl">Password</label>
+          <div className="password-wrap">
+            <input
+              className="inp"
+              type={showPass ? "text" : "password"}
+              autoComplete="new-password"
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              placeholder=""
+              required
+            />
+            <button
+              type="button"
+              className="eye"
+              aria-label={showPass ? "Hide password" : "Show password"}
+              onClick={() => setShowPass(v => !v)}
+              title={showPass ? "Hide" : "Show"}
+            >
+              {showPass ? "🙈" : "👁️"}
+            </button>
+          </div>
+        </div>
+        {err && <div className="error">⛔ {err}</div>}
+        <div className="row" style={{justifyContent:"flex-end"}}>
+          <button className="btn btn-maroon" type="submit">Sign In</button>
+        </div>
+      </form>
+
+      <style>{`
+        .login-center{ display:grid; place-items:center; min-height:90vh; }
+        .brand-center{ flex-direction:column; text-align:center; }
+        .brand-center .brand-meta{ margin-top:6px; }
+        .login-card{ max-width:560px; width:100%; }
+        .login-card .row{ display:flex; gap:10px; align-items:center; margin:6px 0; flex-wrap:wrap; }
+        .login-card .lbl{ width:110px; color:#444; }
+        .login-card .inp{ flex:1 1 260px; min-width:220px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; color:var(--ink); background:#fff; }
+        .password-wrap{ position:relative; flex:1 1 260px; }
+        .password-wrap .inp{ width:100%; padding-right:40px; }
+        .password-wrap .eye{ position:absolute; right:8px; top:50%; transform:translateY(-50%); padding:4px 6px; border-radius:8px; }
+        .error{ color:#b91c1c; margin:6px 0; }
+      `}</style>
+    </div>
+  );
+}
 
 /* ---------- App ---------- */
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
   const lastResultRef = useRef<string>("");
-  const [status, setStatus] = useState(
-    "Ready. Tap Start and point a code inside the frame."
+
+  // -------- AUTH GATE ----------
+  const [authed, setAuthed] = useState(
+    typeof window !== "undefined" && localStorage.getItem(AUTH_STORAGE_KEY) === "1"
   );
+
+  const [status, setStatus] = useState("Ready. Tap Start and point a code inside the frame.");
   const [payload, setPayload] = useState<Payload | null>(null);
   const [txn, setTxn] = useState("");
   const [flashSupported, setFlashSupported] = useState(false);
@@ -202,13 +260,32 @@ export default function App() {
   // Settings UI
   const [showSettings, setShowSettings] = useState(false);
 
+  // Logout helper
+  const logout = () => {
+    try { scannerRef.current?.stop(); } catch {}
+    try { scannerRef.current?.destroy(); } catch {}
+    scannerRef.current = null;
+    setIsScanning(false);
+    setTorchOn(false);
+    setFlashSupported(false);
+
+    setPayload(null);
+    setTxn("");
+    setSummary(null);
+    setStatus("Signed out.");
+    setAdmitCount(1);
+    setUndoCount(1);
+    setNote("");
+
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setAuthed(false);
+  };
+
   // Bootstrap from localStorage / env / URL (?vid= & ?k=)
   useEffect(() => {
     const savedVid = localStorage.getItem("nssnt_verifier_id") || "";
     const savedKey = localStorage.getItem("nssnt_api_key") || API_KEY_ENV || "";
-
-    let vid = savedVid;
-    let key = savedKey;
+    let vid = savedVid, key = savedKey;
 
     try {
       const u = new URL(window.location.href);
@@ -229,47 +306,22 @@ export default function App() {
     if (key) localStorage.setItem("nssnt_api_key", key);
   }, []);
 
-  function updateVerifierId(v: string) {
-    setVerifierId(v);
-    localStorage.setItem("nssnt_verifier_id", v || "");
-  }
-  function updateApiKey(v: string) {
-    setApiKey(v);
-    localStorage.setItem("nssnt_api_key", v || "");
-  }
+  function updateVerifierId(v: string) { setVerifierId(v); localStorage.setItem("nssnt_verifier_id", v || ""); }
+  function updateApiKey(v: string)     { setApiKey(v);     localStorage.setItem("nssnt_api_key", v || ""); }
 
   // Camera permission helper
-  const [camPerm, setCamPerm] = useState<
-    "granted" | "prompt" | "denied" | "unknown"
-  >("unknown");
+  const [camPerm, setCamPerm] = useState<"granted" | "prompt" | "denied" | "unknown">("unknown");
   async function requestCameraPermission() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      stream.getTracks().forEach((t) => t.stop());
-      setCamPerm("granted");
-    } catch {
-      setCamPerm("denied");
-    }
+    try { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); stream.getTracks().forEach((t) => t.stop()); setCamPerm("granted"); }
+    catch { setCamPerm("denied"); }
   }
-  useEffect(() => {
-    (async () => {
-      try {
-        const perm: any = (navigator as any).permissions
-          ? await (navigator.permissions as any).query({
-              name: "camera" as any,
-            })
-          : null;
-        if (perm) {
-          setCamPerm(perm.state as any);
-          perm.onchange = () => setCamPerm(perm.state as any);
-        } else {
-          setCamPerm("unknown");
-        }
-      } catch {
-        setCamPerm("unknown");
-      }
-    })();
-  }, []);
+  useEffect(() => { (async () => {
+    try {
+      const perm: any = (navigator as any).permissions ? await (navigator.permissions as any).query({ name: "camera" as any }) : null;
+      if (perm) { setCamPerm(perm.state as any); perm.onchange = () => setCamPerm(perm.state as any); }
+      else setCamPerm("unknown");
+    } catch { setCamPerm("unknown"); }
+  })(); }, []);
 
   // DB summary UI state
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -284,35 +336,29 @@ export default function App() {
   // Start camera
   async function start() {
     setStatus("Initializing camera…");
-    setPayload(null);
-    setTxn("");
-    lastResultRef.current = "";
-    setTorchOn(false);
-    setFlashSupported(false);
-    setSummary(null);
-    setSumErr("");
-    setAdmitCount(1);
-    setUndoCount(1);
+    setPayload(null); setTxn(""); lastResultRef.current = "";
+    setTorchOn(false); setFlashSupported(false);
+    setSummary(null); setSumErr("");
+    setAdmitCount(1); setUndoCount(1);
     setNote("");
 
     // prefer rear camera
     let deviceId: string | undefined;
     try {
       const cams = await QrScanner.listCameras(true);
-      const byLabel = cams.find((c) =>
-        /back|rear|environment/i.test(c.label || "")
-      );
+      const byLabel = cams.find((c) => /back|rear|environment/i.test(c.label || ""));
       deviceId = (byLabel || cams.at(-1) || { id: undefined }).id;
-    } catch {
-      deviceId = undefined;
-    }
+    } catch { deviceId = undefined; }
 
     const onDecode = (res: ScanResultLike) => {
       const raw = typeof res === "string" ? res : res?.data || "";
       if (!raw || raw === lastResultRef.current) return; // dedupe
       lastResultRef.current = raw;
 
+      console.debug("[scan] raw:", raw);
       const obj = decodeToJson(raw);
+      console.debug("[scan] decoded:", obj);
+
       if (!obj) {
         setStatus("Scanned text is not JSON.");
         if (!continuous) stop();
@@ -320,12 +366,12 @@ export default function App() {
       }
 
       const main = (obj as any).data ?? obj;
+      console.debug("[scan] main:", main);
       setPayload(main);
       const t = findTxnAny(main);
+      console.debug("[scan] txn:", t);
       setTxn(t);
-      setStatus(
-        t ? "✅ Ticket Information." : "✅ Ticket Information (no transaction id)"
-      );
+      setStatus(t ? "✅ Ticket Information." : "✅ Ticket Information (no transaction id)");
       if (!continuous) stop();
     };
 
@@ -364,9 +410,7 @@ export default function App() {
     if (!s) return;
     try {
       if (flashSupported && torchOn) {
-        try {
-          await s.turnFlashOff();
-        } catch {}
+        try { await s.turnFlashOff(); } catch {}
       }
       await s.stop();
     } finally {
@@ -382,13 +426,8 @@ export default function App() {
     const s = scannerRef.current;
     if (!s || !flashSupported) return;
     try {
-      if (torchOn) {
-        await s.turnFlashOff();
-        setTorchOn(false);
-      } else {
-        await s.turnFlashOn();
-        setTorchOn(true);
-      }
+      if (torchOn) { await s.turnFlashOff(); setTorchOn(false); }
+      else { await s.turnFlashOn(); setTorchOn(true); }
     } catch {}
   }
 
@@ -396,48 +435,39 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     async function run() {
-      if (!txn) {
-        setSummary(null);
-        setSumErr("");
-        return;
-      }
-      setSumLoading(true);
-      setSumErr("");
+      if (!txn) { setSummary(null); setSumErr(""); return; }
+      setSumLoading(true); setSumErr("");
       try {
+        console.debug("[summary] GET", ENDPOINTS.summary(txn));
         const r = await fetch(ENDPOINTS.summary(txn), {
           credentials: "include",
           headers: apiKey ? { "X-API-Key": apiKey } : undefined,
         });
         if (!alive) return;
         if (!r.ok) {
-          const data = await r.json().catch(() => null);
-          const detail = data?.detail || `Lookup failed (${r.status})`;
-          setSumErr(detail);
-          setSummary(null);
-          if (r.status === 401)
-            setStatus("⛔ Unauthorized. Enter API key in Settings.");
+          let detail = `Lookup failed (${r.status})`;
+          try {
+            const data = await r.json();
+            // @ts-ignore
+            if (data?.detail) detail = data.detail;
+          } catch {}
+          setSumErr(detail); setSummary(null);
+          if (r.status === 401) setStatus("⛔ Unauthorized. Enter API key in Settings.");
         } else {
           const data = await r.json();
+          console.debug("[summary] data:", data);
           setSummary(data as Summary);
-          setAdmitCount(1);
-          setUndoCount(1);
+          setAdmitCount(1); setUndoCount(1);
         }
       } catch (e: any) {
-        if (alive) {
-          setSumErr(e?.message || "Network error");
-          setSummary(null);
-        }
-      } finally {
-        if (alive) setSumLoading(false);
-      }
+        if (alive) { setSumErr(e?.message || "Network error"); setSummary(null); }
+      } finally { if (alive) setSumLoading(false); }
     }
     run();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [txn, apiKey]);
 
-  // Perform a check-in delta and apply server's returned counts (no extra fetch)
+  // Apply check-in delta
   async function applyDelta(delta: number) {
     if (!txn || delta === 0) return;
     setActionBusy(true);
@@ -456,31 +486,21 @@ export default function App() {
           notes: note || undefined,
         }),
       });
-      const data: Partial<CheckinResp> & { detail?: string } =
-        await r.json().catch(() => ({} as any));
+      const data: Partial<CheckinResp> & { detail?: string } = await r.json().catch(() => ({} as any));
       if (!r.ok) {
         alert(data?.detail || data?.message || `Update failed (${r.status})`);
       } else if (summary) {
-        // Merge new counts into summary without refetch
         setSummary({
           ...summary,
-          number_checked_in:
-            data.checked_in ?? summary.number_checked_in,
+          number_checked_in: data.checked_in ?? summary.number_checked_in,
           remaining:
             data.remaining ??
-            Math.max(
-              0,
-              summary.number_of_attendees -
-                (data.checked_in ?? summary.number_checked_in)
-            ),
+            Math.max(0, summary.number_of_attendees - (data.checked_in ?? summary.number_checked_in)),
           all_attendees_checked_in:
-            (data.remaining ?? summary.remaining) === 0 &&
-            summary.number_of_attendees > 0,
+            (data.remaining ?? summary.remaining) === 0 && summary.number_of_attendees > 0,
         });
         alert(data?.message || "Updated");
-        setAdmitCount(1);
-        setUndoCount(1);
-        setNote("");
+        setAdmitCount(1); setUndoCount(1); setNote("");
       }
     } catch (e: any) {
       alert(e?.message || "Network error");
@@ -491,35 +511,25 @@ export default function App() {
 
   useEffect(() => () => { stop(); }, []);
 
-  const fields = payload
-    ? Object.entries(payload).filter(
-        ([k]) => !HIDE_KEYS.has(k.toLowerCase())
-      )
-    : [];
-
+  const fields = payload ? Object.entries(payload).filter(([k]) => !HIDE_KEYS.has(k.toLowerCase())) : [];
   const purchased = summary?.number_of_attendees ?? 0;
   const checkedIn = summary?.number_checked_in ?? 0;
-  const remaining =
-    summary?.remaining ?? Math.max(0, purchased - checkedIn);
+  const remaining = summary?.remaining ?? Math.max(0, purchased - checkedIn);
 
   const maxAdmit = Math.max(1, remaining || 0);
   const maxUndo  = Math.max(1, checkedIn || 0);
 
-  // Clamp the counters whenever limits change
-  useEffect(() => {
-    setAdmitCount((c) => clamp(c, 1, maxAdmit));
-  }, [maxAdmit]);
-  useEffect(() => {
-    setUndoCount((c) => clamp(c, 1, maxUndo));
-  }, [maxUndo]);
+  useEffect(() => { setAdmitCount((c) => clamp(c, 1, maxAdmit)); }, [maxAdmit]);
+  useEffect(() => { setUndoCount((c) => clamp(c, 1, maxUndo)); }, [maxUndo]);
 
   const incAdmit = () => setAdmitCount((c) => clamp(c + 1, 1, maxAdmit));
   const decAdmit = () => setAdmitCount((c) => clamp(c - 1, 1, maxAdmit));
   const incUndo  = () => setUndoCount((c) => clamp(c + 1, 1, maxUndo));
   const decUndo  = () => setUndoCount((c) => clamp(c - 1, 1, maxUndo));
 
-  const startDisabled =
-    !verifierId.trim() || (REQUIRE_KEY && !apiKey.trim());
+  const startDisabled = !verifierId.trim() || (REQUIRE_KEY && !apiKey.trim());
+
+  if (!authed) { return <LoginScreen onAuthed={() => setAuthed(true)} />; }
 
   return (
     <div className="wrap">
@@ -575,9 +585,12 @@ export default function App() {
               onChange={(e) => setNote(e.target.value)}
             />
           </div>
-          <div className="row small">
-            Tip: You can auto-provision with URL params like{" "}
-            <code>?vid=frontdesk-1&amp;k=KEY</code>.
+
+          <hr style={{ border: "none", borderTop: "1px solid #efe6c9", margin: "10px 0" }} />
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <button className="btn btn-outline-gold" onClick={logout}>
+              🚪 Logout
+            </button>
           </div>
         </div>
       )}
@@ -585,17 +598,15 @@ export default function App() {
       {/* Scanner frame */}
       <div className={`frame ${isScanning ? "active" : ""}`}>
         <video ref={videoRef} muted playsInline />
-        {/* decorative corners (grey) */}
         <div className="corner tl" />
         <div className="corner tr" />
         <div className="corner bl" />
         <div className="corner br" />
-        {/* fancy overlay while scanning */}
         {isScanning && <div className="scanline" aria-hidden="true" />}
         {isScanning && <div className="glow" aria-hidden="true" />}
       </div>
 
-      {/* Permission banner (shows until granted) */}
+      {/* Permission banner */}
       {camPerm !== "granted" && (
         <div className="perm">
           Camera access required.{" "}
@@ -607,45 +618,13 @@ export default function App() {
 
       {/* Controls */}
       <div className="controls">
+        <button className="btn btn-maroon" onClick={start} disabled={startDisabled}>🎥 Start</button>
+        <button className="btn btn-danger" onClick={stop} disabled={!scannerRef.current}>⏹️ Stop</button>
         <button
-          className="btn btn-maroon"
-          onClick={start}
-          disabled={startDisabled}
-        >
-          🎥 Start
-        </button>
-        <button
-          className="btn btn-danger"
-          onClick={stop}
-          disabled={!scannerRef.current}
-        >
-          ⏹️ Stop
-        </button>
-        <button
-          className="btn btn-outline-gold"
-          onClick={() => {
-            setPayload(null);
-            setTxn("");
-            setSummary(null);
-            setStatus("Cleared.");
-          }}
+          className="btn btn-blue"
+          onClick={() => { setPayload(null); setTxn(""); setSummary(null); setStatus("Cleared."); }}
         >
           🧹 Clear
-        </button>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={continuous}
-            onChange={(e) => setContinuous(e.target.checked)}
-          />
-          Continuous
-        </label>
-        <button
-          className="btn btn-outline-gold"
-          onClick={toggleFlash}
-          disabled={!scannerRef.current || !flashSupported}
-        >
-          💡 Flash {torchOn ? "On" : "Off"}
         </button>
       </div>
 
@@ -690,51 +669,24 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Top actions — Admit only (Undo moved to bottom) */}
+              {/* Top actions — Admit only */}
               <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                 <label className="nbox">
                   Admit now
                   <div className="stepper">
-                    <button
-                      className="btn btn-outline-gold btn-step"
-                      onClick={decAdmit}
-                      disabled={admitCount <= 1}
-                      aria-label="Decrease admit count"
-                    >−</button>
+                    <button className="btn btn-outline-gold btn-step" onClick={decAdmit} disabled={admitCount <= 1} aria-label="Decrease admit count">−</button>
                     <input
                       type="number"
                       min={1}
                       max={maxAdmit}
                       value={admitCount}
-                      onChange={(e) =>
-                        setAdmitCount(
-                          clamp(Number(e.target.value) || 1, 1, maxAdmit)
-                        )
-                      }
+                      onChange={(e) => setAdmitCount(clamp(Number(e.target.value) || 1, 1, maxAdmit))}
                     />
-                    <button
-                      className="btn btn-outline-gold btn-step"
-                      onClick={incAdmit}
-                      disabled={admitCount >= maxAdmit}
-                      aria-label="Increase admit count"
-                    >+</button>
+                    <button className="btn btn-outline-gold btn-step" onClick={incAdmit} disabled={admitCount >= maxAdmit} aria-label="Increase admit count">+</button>
                   </div>
                 </label>
-                <button
-                  className="btn btn-maroon"
-                  onClick={() => applyDelta(admitCount)}
-                  disabled={actionBusy || remaining <= 0}
-                >
-                  ✅ Admit
-                </button>
-
-                <button
-                  className="btn btn-maroon"
-                  onClick={() => applyDelta(remaining)}
-                  disabled={actionBusy || remaining <= 0}
-                >
-                  ➡️ Admit All ({remaining})
-                </button>
+                <button className="btn btn-maroon" onClick={() => applyDelta(admitCount)} disabled={actionBusy || remaining <= 0}>✅ Admit</button>
+                <button className="btn btn-maroon" onClick={() => applyDelta(remaining)} disabled={actionBusy || remaining <= 0}>➡️ Admit All ({remaining})</button>
               </div>
 
               {summary.all_attendees_checked_in && (
@@ -764,36 +716,45 @@ export default function App() {
         </div>
       )}
 
-      {/* BOTTOM: Undo controls moved here (after table) with confirmation */}
+      {/* Controls (Continuous + Flash) placed above Undo */}
+      {summary && !sumLoading && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <div className="row" style={{ marginBottom: 8, gap: 12 }}>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={continuous}
+                onChange={(e) => setContinuous(e.target.checked)}
+              />
+              Continuous
+            </label>
+            <button
+              className="btn btn-outline-gold"
+              onClick={toggleFlash}
+              disabled={!scannerRef.current || !flashSupported}
+            >
+              💡 Flash {torchOn ? "On" : "Off"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* BOTTOM: Undo controls with confirmation */}
       {summary && !sumLoading && (
         <div className="card" style={{ marginTop: 12 }}>
           <div className="actions actions-bottom" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
             <label className="nbox">
               Undo
               <div className="stepper">
-                <button
-                  className="btn btn-outline-gold btn-step"
-                  onClick={decUndo}
-                  disabled={undoCount <= 1}
-                  aria-label="Decrease undo count"
-                >−</button>
+                <button className="btn btn-outline-gold btn-step" onClick={decUndo} disabled={undoCount <= 1} aria-label="Decrease undo count">−</button>
                 <input
                   type="number"
                   min={1}
                   max={maxUndo}
                   value={undoCount}
-                  onChange={(e) =>
-                    setUndoCount(
-                      clamp(Number(e.target.value) || 1, 1, maxUndo)
-                    )
-                  }
+                  onChange={(e) => setUndoCount(clamp(Number(e.target.value) || 1, 1, maxUndo))}
                 />
-                <button
-                  className="btn btn-outline-gold btn-step"
-                  onClick={incUndo}
-                  disabled={undoCount >= maxUndo}
-                  aria-label="Increase undo count"
-                >+</button>
+                <button className="btn btn-outline-gold btn-step" onClick={incUndo} disabled={undoCount >= maxUndo} aria-label="Increase undo count">+</button>
               </div>
             </label>
             <button
@@ -814,7 +775,6 @@ export default function App() {
 
       <style>{`
         :root{
-          /* NSSNT brand */
           --brand-maroon: #7a0019;
           --brand-maroon-deep: #5a0013;
           --brand-gold:   #caa43a;
@@ -822,20 +782,17 @@ export default function App() {
           --brand-orange: #f59e0b;
           --ivory:        #fffbef;
           --ivory-2:      #fff6dd;
-
           --ink: #0f172a;
           --danger: #ef4444;
           --corner: #b9b9b9;
         }
 
-        /* page */
         .wrap {
           font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial;
           max-width: 980px; margin: 0 auto; color: var(--ink);
           padding: calc(max(16px, env(safe-area-inset-top)) + 12px) 16px calc(24px + 12px);
           background: linear-gradient(0deg, #fff, var(--ivory));
         }
-        /* kasavu ribbons */
         .wrap::before, .wrap::after{
           content:""; position: fixed; left:0; right:0; height:10px; z-index: 999;
           background:
@@ -847,23 +804,19 @@ export default function App() {
         .wrap::before{ top:0; }
         .wrap::after{ bottom:0; }
 
-        /* brand */
         .brand{ display:flex; align-items:center; gap:12px; margin-bottom:12px; }
-        .logo{ height:40px; width:auto; object-fit:contain; }
         .brand-title{ margin:0; font-size:1.15rem; line-height:1.2; }
         .brand-sub{ color:#666; font-size:.92rem; }
         .gear{ margin-left:auto; }
+        .logo{ height:40px; width:auto; object-fit:contain; }
 
-        /* cards & inputs */
         .settings, .card{
           border:1px solid #efe6c9; border-radius:12px; padding:12px; margin:10px 0 16px; background:#fff;
         }
         .settings .row{ display:flex; gap:10px; align-items:center; margin:6px 0; flex-wrap:wrap; }
-        .settings .row.small{ color:#666; font-size:.9rem; }
         .lbl{ width:110px; color:#444; }
         .inp{ flex:1 1 260px; min-width:220px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; color:var(--ink); background:#fff; }
 
-        /* scanner */
         .frame{ position:relative; width:100%; aspect-ratio:3/4; background:#000; border-radius:14px; box-shadow:0 4px 14px rgba(0,0,0,.12); overflow:hidden; }
         .frame.active{ box-shadow:0 0 0 2px var(--brand-gold), 0 8px 18px rgba(0,0,0,.18); }
         video{ width:100%; height:100%; object-fit:cover; }
@@ -884,10 +837,8 @@ export default function App() {
           pointer-events:none;
         }
 
-        /* permission */
         .perm{ margin:10px 0; color:#444; background:var(--ivory-2); border:1px solid #f1e4bd; padding:8px 10px; border-radius:10px; display:flex; gap:10px; align-items:center; }
 
-        /* Button reset + brand variants */
         button{ -webkit-appearance:none; appearance:none; background:none; border:none; color:inherit; font:inherit; }
         .btn{
           --btn-bg:#fff; --btn-fg:var(--ink); --btn-bd:#d1d5db;
@@ -901,18 +852,22 @@ export default function App() {
         .btn:focus-visible{ outline:2px solid var(--brand-gold); outline-offset:2px; }
 
         .btn-maroon{ --btn-bg:var(--brand-maroon); --btn-bd:var(--brand-maroon-deep); --btn-fg:#ffffff; }
-        .btn-orange{ --btn-bg:var(--brand-orange); --btn-bd:#d97706; --btn-fg:#111827; }
-        .btn-outline-gold{ --btn-bg:#fff; --btn-bd:var(--brand-gold); --btn-fg:var(--brand-maroon); }
-        .btn-danger{ --btn-bg:var(--danger); --btn-bd:#dc2626; --btn-fg:#fff; }
+        .btn-orange{ --btn-bg:var(--brand-orange); --btn-bd:#d97706; --btn-fg:#ffffff; }
+        .btn-danger{ --btn-bg:var(--danger); --btn-bd:#302727; --btn-fg:#ffffff; }
+        .btn-blue { --btn-bg:#3b82f6; --btn-bd:#2563eb; --btn-fg:#ffffff; }
 
-        /* layout rows */
-        .controls{ display:flex; gap:10px; margin:12px 0; align-items:center; flex-wrap:wrap; }
+        .controls {
+          display: flex;
+          justify-content: space-evenly; /* 👈 evenly spaced */
+          margin: 12px 0;
+          align-items: center;
+          flex-wrap: wrap;
+        }
         .toggle{ display:flex; gap:6px; align-items:center; font-size:14px; color:#444; }
 
         .status{ color:#444; margin-bottom:6px; min-height:1.25rem; }
         .status .warn{ color:#a46000; }
 
-        /* metrics */
         .metrics{ display:flex; gap:10px; flex-wrap:wrap; margin:6px 0 4px; }
         .metric{ flex:1 1 140px; border:1px solid #efe6c9; border-radius:12px; padding:12px; background:var(--ivory); color:var(--ink); }
         .m-title{ color:#6b7280; font-size:.85rem; }
@@ -921,28 +876,18 @@ export default function App() {
         .nbox{ display:flex; flex-direction:column; gap:6px; font-size:.9rem; color:#444; }
         .nbox input{ width:90px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; color:var(--ink); background:#fff; text-align:center; }
 
-        /* custom stepper */
         .stepper{ display:flex; align-items:center; gap:6px; }
         .btn-step{ padding:.35rem .6rem; min-height:auto; border-radius:10px; }
-        .btn-step:disabled{ opacity:.4; }
-
-        /* Hide native spin buttons (we provide +/-) */
         input[type="number"]{-moz-appearance:textfield;}
         input[type="number"]::-webkit-outer-spin-button,
         input[type="number"]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
 
-        /* ticket table */
         .ticket-card{ background:#fff; color:var(--ink); }
         .ticket-title{ margin:0 0 8px 0; }
         table.result{ width:100%; border-collapse:collapse; }
         table.result th, table.result td{ border:1px solid #efe6c9; padding:10px 12px; color:var(--ink); }
         table.result th{ background:var(--brand-gold-soft); color:var(--brand-maroon); text-align:left; white-space:nowrap; width:18%; font-weight:700; }
         table.result td{ background:var(--ivory); overflow-wrap:anywhere; }
-
-        @media (max-width:480px){
-          .brand-title{ font-size:1.05rem; }
-          .m-value{ font-size:1.15rem; }
-        }
       `}</style>
     </div>
   );
