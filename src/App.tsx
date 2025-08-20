@@ -57,10 +57,30 @@ export default function App() {
       // One‑shot by default: stop AFTER a successful decode (allow UI to paint first)
       if (!continuous) {
         setTimeout(() => {
-          try { stop(); } catch {}
+          try { stopWithLog("onDecode success one-shot"); } catch {}
         }, 150);
       }
     });
+
+  // NEW: Make sure the actual <video> element is inline & muted (iOS/Safari/prod)
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      // iOS requires the attribute itself
+      v.setAttribute("playsinline", "");
+      v.muted = true; // avoid autoplay blocks
+      // v.autoplay = true; // optional, only if your hook expects it
+    } catch {}
+  }, [videoRef]);
+
+  // NEW: Wrap stop() so we can see *who* stopped the stream
+  const stopRef = useRef(stop);
+  useEffect(() => { stopRef.current = stop; }, [stop]);
+  function stopWithLog(reason: string) {
+    console.log("[scanner] stop called:", reason);
+    return stopRef.current();
+  }
 
   // -------- persisted settings --------
   const [verifierId, setVerifierId] = useLocalStorage("nssnt_verifier_id", "");
@@ -196,7 +216,7 @@ export default function App() {
     capturedOnceRef.current = false;
   }
   function logout() {
-    try { stop(); } catch {}
+    try { stopWithLog("logout"); } catch {}
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setAuthed(false);
     clearAll();
@@ -256,7 +276,7 @@ export default function App() {
           capturedOnceRef.current = false; // reset for fresh capture
           start();
         }}
-        onStop={stop}
+        onStop={() => stopWithLog("user pressed Stop")}
         onClear={clearAll}
         canStart={!startDisabled}
         canStop={!!isScanning}
