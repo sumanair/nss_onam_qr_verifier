@@ -131,100 +131,77 @@ function valueOut(v: unknown) {
 }
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
-/* ==================== Login Screen ====================== */
-function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
+/* ==================== NEW LoginForm (drop-in) ====================== */
+function LoginForm({ onAuthed }: { onAuthed: () => void }){
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [err,  setErr]  = useState("");
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setErr("");
-
-    if (LOGIN_SHA256) {
+  async function handleLogin(e: any){
+    e.preventDefault(); setErr("");
+    if (LOGIN_SHA256){
       const h = await sha256Hex(`${user}:${pass}`);
-      if (h === LOGIN_SHA256) {
-        localStorage.setItem(AUTH_STORAGE_KEY, "1");
-        onAuthed();
-        return;
-      }
-      setErr("Invalid username or password.");
-      return;
+      if (h === LOGIN_SHA256){ localStorage.setItem(AUTH_STORAGE_KEY, "1"); onAuthed(); return; }
+      setErr("Invalid username or password."); return;
     }
-
-    if (user === LOGIN_USER && pass === LOGIN_PASS) {
-      localStorage.setItem(AUTH_STORAGE_KEY, "1");
-      onAuthed();
-    } else {
-      setErr("Invalid username or password.");
-    }
+    if (user === LOGIN_USER && pass === LOGIN_PASS){ localStorage.setItem(AUTH_STORAGE_KEY, "1"); onAuthed(); }
+    else setErr("Invalid username or password.");
   }
 
   return (
-    <div className="wrap login-center">
-      <header className="brand brand-center">
-        <img className="logo" src={logoUrl} alt="NSSNT logo" />
-        <div className="brand-meta">
-          <h1 className="brand-title">NSSNT Verifier</h1>
-          <div className="brand-sub">Sign in to continue</div>
-        </div>
-      </header>
-
-      <form className="card login-card" onSubmit={handleLogin}>
-        <div className="row">
-          <label className="lbl">Username</label>
-          <input
-            className="inp"
-            type="text"
-            autoComplete="username"
-            value={user}
-            onChange={(e) => setUser(e.target.value)}
-            placeholder="verifier"
-            required
-          />
-        </div>
-        <div className="row">
-          <label className="lbl">Password</label>
-          <div className="password-wrap">
-            <input
-              className="inp"
-              type={showPass ? "text" : "password"}
-              autoComplete="new-password"
-              value={pass}
-              onChange={(e) => setPass(e.target.value)}
-              placeholder=""
-              required
-            />
-            <button
-              type="button"
-              className="eye"
-              aria-label={showPass ? "Hide password" : "Show password"}
-              onClick={() => setShowPass(v => !v)}
-              title={showPass ? "Hide" : "Show"}
-            >
-              {showPass ? "🙈" : "👁️"}
-            </button>
+    <div className="wrap login-screen">
+      <div className="login-box card">
+        <header className="brand brand-center" style={{marginBottom:8}}>
+          <img className="logo" src={logoUrl} alt="NSSNT logo" />
+          <div className="brand-meta">
+            <h1 className="brand-title">NSSNT Verifier</h1>
+            <div className="brand-sub">Sign in to continue</div>
           </div>
-        </div>
-        {err && <div className="error">⛔ {err}</div>}
-        <div className="row" style={{justifyContent:"flex-end"}}>
-          <button className="btn btn-maroon" type="submit">Sign In</button>
-        </div>
-      </form>
+        </header>
 
+        <h2 className="login-title">Sign in</h2>
+        <form onSubmit={handleLogin}>
+          <div className="row">
+            <label className="lbl" htmlFor="username">Username</label>
+            <input id="username" className="inp" type="text" placeholder="verifier" autoComplete="username" value={user} onChange={e=>setUser(e.target.value)} required />
+          </div>
+          <div className="row">
+            <label className="lbl" htmlFor="password">Password</label>
+            <div className="password-wrap">
+              <input id="password" className="inp" type={showPass?"text":"password"} autoComplete="current-password" value={pass} onChange={e=>setPass(e.target.value)} required />
+              <button type="button" className="eye" aria-label={showPass?"Hide password":"Show password"} onClick={()=>setShowPass(v=>!v)}>{showPass?"🙈":"👁️"}</button>
+            </div>
+          </div>
+          {err && <div className="error">⛔ {err}</div>}
+          <div className="row" style={{justifyContent:"flex-end"}}>
+            <button className="btn btn-maroon" type="submit">Sign In</button>
+          </div>
+        </form>
+      </div>
+
+      {/* Scoped styles for login */}
       <style>{`
-        .login-center{ display:grid; place-items:center; min-height:90vh; }
+        .login-screen {
+          display: grid;
+          place-items: center;
+          min-height: 70vh;
+          padding: 28px 16px;
+        }
+        .login-box input.inp,
+        .login-box textarea.inp {
+          appearance: none; -webkit-appearance: none;
+          display: block; width: 100%;
+          height: 44px !important; min-height: 44px !important; max-height: 44px !important;
+          line-height: 44px !important; padding: 0 10px !important;
+          flex: 0 0 auto !important; box-sizing: border-box;
+        }
+        .password-wrap { position: relative; }
+        .password-wrap .inp { padding-right: 44px !important; }
+        .eye { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border-radius: 10px; padding: 6px 8px; cursor: pointer; }
         .brand-center{ flex-direction:column; text-align:center; }
         .brand-center .brand-meta{ margin-top:6px; }
-        .login-card{ max-width:560px; width:100%; }
-        .login-card .row{ display:flex; gap:10px; align-items:center; margin:6px 0; flex-wrap:wrap; }
-        .login-card .lbl{ width:110px; color:#444; }
-        .login-card .inp{ flex:1 1 260px; min-width:220px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; color:var(--ink); background:#fff; }
-        .password-wrap{ position:relative; flex:1 1 260px; }
-        .password-wrap .inp{ width:100%; padding-right:40px; }
-        .password-wrap .eye{ position:absolute; right:8px; top:50%; transform:translateY(-50%); padding:4px 6px; border-radius:8px; }
-        .error{ color:#b91c1c; margin:6px 0; }
+        .login-title { margin: 0 0 10px 0; text-align: center; }
       `}</style>
     </div>
   );
@@ -355,10 +332,7 @@ export default function App() {
       if (!raw || raw === lastResultRef.current) return; // dedupe
       lastResultRef.current = raw;
 
-      console.debug("[scan] raw:", raw);
       const obj = decodeToJson(raw);
-      console.debug("[scan] decoded:", obj);
-
       if (!obj) {
         setStatus("Scanned text is not JSON.");
         if (!continuous) stop();
@@ -366,10 +340,8 @@ export default function App() {
       }
 
       const main = (obj as any).data ?? obj;
-      console.debug("[scan] main:", main);
       setPayload(main);
       const t = findTxnAny(main);
-      console.debug("[scan] txn:", t);
       setTxn(t);
       setStatus(t ? "✅ Ticket Information." : "✅ Ticket Information (no transaction id)");
       if (!continuous) stop();
@@ -438,7 +410,6 @@ export default function App() {
       if (!txn) { setSummary(null); setSumErr(""); return; }
       setSumLoading(true); setSumErr("");
       try {
-        console.debug("[summary] GET", ENDPOINTS.summary(txn));
         const r = await fetch(ENDPOINTS.summary(txn), {
           credentials: "include",
           headers: apiKey ? { "X-API-Key": apiKey } : undefined,
@@ -446,16 +417,13 @@ export default function App() {
         if (!alive) return;
         if (!r.ok) {
           let detail = `Lookup failed (${r.status})`;
-          try {
-            const data = await r.json();
-            // @ts-ignore
+          try { const data = await r.json(); // @ts-ignore
             if (data?.detail) detail = data.detail;
           } catch {}
           setSumErr(detail); setSummary(null);
           if (r.status === 401) setStatus("⛔ Unauthorized. Enter API key in Settings.");
         } else {
           const data = await r.json();
-          console.debug("[summary] data:", data);
           setSummary(data as Summary);
           setAdmitCount(1); setUndoCount(1);
         }
@@ -529,7 +497,7 @@ export default function App() {
 
   const startDisabled = !verifierId.trim() || (REQUIRE_KEY && !apiKey.trim());
 
-  if (!authed) { return <LoginScreen onAuthed={() => setAuthed(true)} />; }
+  if (!authed) { return <LoginForm onAuthed={() => setAuthed(true)} />; }
 
   return (
     <div className="wrap">
@@ -822,12 +790,10 @@ export default function App() {
           border-radius: 8px;
           color: var(--ink);
           background: #fff;
-
-          /* prevent the giant height in column flex rows */
-          flex: 0 0 auto;          /* or: flex-basis: auto; */
-          min-width: 0;            /* avoid overflow in flex layouts */
-          line-height: 1.2;        /* crisp height */
-          height: 44px;            /* optional: set a consistent control height */
+          flex: 0 0 auto;
+          min-width: 0;
+          line-height: 1.2;
+          height: 44px;
         }
         .frame{ position:relative; width:100%; aspect-ratio:3/4; background:#000; border-radius:14px; box-shadow:0 4px 14px rgba(0,0,0,.12); overflow:hidden; }
         .frame.active{ box-shadow:0 0 0 2px var(--brand-gold), 0 8px 18px rgba(0,0,0,.18); }
@@ -870,7 +836,7 @@ export default function App() {
 
         .controls {
           display: flex;
-          justify-content: space-evenly; /* 👈 evenly spaced */
+          justify-content: space-evenly;
           margin: 12px 0;
           align-items: center;
           flex-wrap: wrap;
