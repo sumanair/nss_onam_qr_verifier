@@ -89,26 +89,30 @@ function tryUrl(s?: string) {
 }
 function tryBase64(s?: string) { if (!s) return null; const b = b64UrlDecode(s.trim()); if (!b) return null; try { return JSON.parse(b); } catch { return null; } }
 function tryHex(s?: string)    { if (!s) return null; const h = hexToUtf8(s.trim()); if (!h) return null; try { return JSON.parse(h); } catch { return null; } }
+
+function normalizePhoneValue(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "number") {
+    if (!isFinite(v)) return "";
+    const s = String(Math.trunc(v));
+    return /^0+$/.test(s) ? "" : s; // treat 0 / 000… as empty
+  }
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (!t || t.toLowerCase() === "nan") return "";
+    // keep only digits; this also drops ".0", spaces, dashes, etc.
+    const digits = t.replace(/\D+/g, "");
+    return !digits || /^0+$/.test(digits) ? "" : digits;
+  }
+  return "";
+}
+
 function sanitizePayload(obj: any): any {
   if (!obj || typeof obj !== "object") return obj;
   const out: any = Array.isArray(obj) ? [] : {};
   for (const [k, v] of Object.entries(obj)) {
     const key = k.toLowerCase();
-
-    if (key === "phone") {
-      if (v == null || v === "" || v === "NaN" || (typeof v === "number" && !isFinite(v))) {
-        out[k] = "";
-      } else if (typeof v === "number") {
-        out[k] = String(Math.trunc(v));
-      } else if (typeof v === "string") {
-        const num = Number(v.trim());
-        out[k] = isNaN(num) ? v.trim() : String(Math.trunc(num));
-      } else {
-        out[k] = String(v ?? "");
-      }
-      continue;
-    }
-
+    if (key === "phone") { out[k] = normalizePhoneValue(v); continue; }
     // Recurse into objects/arrays so nested items are also cleaned
     if (v && typeof v === "object") out[k] = sanitizePayload(v);
     else out[k] = v;
@@ -156,37 +160,25 @@ function valueOut(v: unknown, key?: string) {
 
   const k = (key || "").toLowerCase();
 
-  // Phone (display-only guard; sanitize already ran)
-  if (k === "phone") {
-    if (typeof v === "number") return String(Math.trunc(v));
-    if (typeof v === "string") {
-      const t = v.trim();
-      const num = Number(t);
-      return isNaN(num) ? t : String(Math.trunc(num));
-    }
-    return String(v ?? "");
-  }
+  if (k === "phone") return normalizePhoneValue(v);
 
-  // Amount → always two decimals
   if (k === "amount") {
     const num = Number(v);
     return isNaN(num) ? "" : num.toFixed(2);
   }
 
-  // Boolean → Yes/No
   if (typeof v === "boolean") return v ? "Yes" : "No";
 
-  // ISO-like datetime → date only
   if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) {
     const d = new Date(v);
     if (!isNaN(d.getTime())) return d.toLocaleDateString();
   }
 
-  // Generic numbers (leave as-is; amount handled above)
   if (typeof v === "number") return String(v);
 
   return String(v ?? "").trim();
 }
+
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
